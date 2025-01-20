@@ -3,7 +3,10 @@ import pandas as pd
 import pickle
 import os
 import utils as ut
-
+st.write("Current Working Directory:", os.getcwd())
+st.write("Contents of the Working Directory:", os.listdir(os.getcwd()))
+st.write("Contents of 'stock-data' Folder:", os.listdir("stock-data") if os.path.exists("stock-data") else "Folder not found")
+st.write("Contents of 'ML-files' Folder:", os.listdir("ML-files") if os.path.exists("ML-files") else "Folder not found")
 # Helper function to load .pkl files
 def load_pickle(file_path):
     try:
@@ -18,8 +21,8 @@ st.title("Dynamic Stock Market Predictor 🧠📈")
 st.sidebar.title("Configuration")
 
 # Example Folders
-csv_folder = os.path.join(os.getcwd(), "stock-data")
-pkl_folder = os.path.join(os.getcwd(), "ML-files")
+csv_folder = "stock-data"
+pkl_folder = "ML-files"
 
 # Load example files from folders
 example_csv_files = [f for f in os.listdir(csv_folder) if f.endswith(".csv")]
