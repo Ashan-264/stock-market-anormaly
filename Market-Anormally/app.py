@@ -3,10 +3,6 @@ import pandas as pd
 import pickle
 import os
 import utils as ut
-st.write("Current Working Directory:", os.getcwd())
-st.write("Contents of the Working Directory:", os.listdir(os.getcwd()))
-st.write("Contents of 'stock-data' Folder:", os.listdir("stock-data") if os.path.exists("stock-data") else "Folder not found")
-st.write("Contents of 'ML-files' Folder:", os.listdir("ML-files") if os.path.exists("ML-files") else "Folder not found")
 # Helper function to load .pkl files
 def load_pickle(file_path):
     try:
