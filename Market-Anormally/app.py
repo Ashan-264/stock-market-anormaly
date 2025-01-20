@@ -1,171 +1,116 @@
 import streamlit as st
 import pandas as pd
 import pickle
-import numpy as np
-import os
-from openai import OpenAI
 import utils as ut
 
-client = OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=os.environ['GROQ_API_KEY'],
+# Helper function to load .pkl files
+def load_pickle(file):
+    try:
+        return pickle.load(file)
+    except Exception as e:
+        st.error(f"Error loading the file: {e}")
+        return None
+
+# Streamlit App
+st.title("Dynamic Stock Market Predictor 🧠📈")
+st.sidebar.title("Configuration")
+st.sidebar.markdown("Upload your models or datasets here!")
+
+# Upload and manage pickle files
+st.sidebar.subheader("Upload Models")
+uploaded_files = st.sidebar.file_uploader(
+    "Upload your `.pkl` models", type="pkl", accept_multiple_files=True
 )
 
+if uploaded_files:
+    st.sidebar.success(f"{len(uploaded_files)} file(s) uploaded successfully!")
+    models = {}
+    for uploaded_file in uploaded_files:
+        model_name = uploaded_file.name.split(".")[0]
+        models[model_name] = load_pickle(uploaded_file)
 
-def load_model(filename):
-  with open(filename, 'rb') as file:
-    return pickle.load(file)
+    st.sidebar.markdown("### Available Models:")
+    for model_name in models:
+        st.sidebar.write(f"- {model_name}")
 
+# Dataset Upload
+st.sidebar.subheader("Upload Dataset")
+uploaded_data = st.sidebar.file_uploader("Upload your dataset (CSV)", type="csv")
 
-xgboost_model = load_model('xgb_model.pkl')
+if uploaded_data:
+    try:
+        # Load dataset
+        data = pd.read_csv(uploaded_data)
 
-naive_baye_model = load_model('mb_model.pkl')
+        # Extract dates from the `Dates` column
+        data['Dates'] = pd.to_datetime(data['Dates'], errors='coerce')
 
-svm_model = load_model('svm_model.pkl')
+        # Drop rows with invalid or missing dates
+        data = data.dropna(subset=['Dates'])
 
-def prepare_input(df):
-    df = pd.read_csv('FinancialMarketData.xlsx - EWS.csv')
-    df['Data'] = pd.to_datetime(df['Data'])
+        # Calculate rolling averages (4-week moving averages)
+        data['VIX_4Week_MA'] = data['VIX'].rolling(window=4).mean()
+        data['DXY_4Week_MA'] = data['DXY'].rolling(window=4).mean()
+        data['Cl1_4Week_MA'] = data['Cl1'].rolling(window=4).mean()
 
-    df['VIX_4Week_MA'] = df['VIX'].rolling(window=4).mean()
-    df['DXY_4Week_MA'] = df['DXY'].rolling(window=4).mean()
-    df['Cl1_4Week_MA'] = df['Cl1'].rolling(window=4).mean()
-    input_dict = {'VIX_4Week_MA': df['VIX_4Week_MA'][1],
-        'DXY_4Week_MA': df['DXY_4Week_MA'][1],
-        'Cl1_4Week_MA': df['Cl1_4Week_MA'][1]
-     }
-    
-    selected_columns = ['DXY_4Week_MA', 'VIX_4Week_MA', 'Cl1_4Week_MA']
-    features = df[selected_columns]
-    return features,input_dict
+        # Drop rows with missing rolling averages
+        data = data.dropna(subset=['VIX_4Week_MA', 'DXY_4Week_MA', 'Cl1_4Week_MA'])
 
+        # Display dataset preview
+        st.write("### Dataset Preview")
+        st.dataframe(data.head())
 
-def make_predictions(input_df, input_dict):
-    # Reorder input_df to match the feature order the model expects
-    selected_columns = ['DXY_4Week_MA', 'VIX_4Week_MA', 'Cl1_4Week_MA']
-    features = input_df[selected_columns]
-    probabilities = {
-        'Random forest feature engineered':
-        xgboost_model.predict_proba(features)[0][1],
-        'XGBOOST SMOTE':
-        svm_model.predict_proba(features)[0][1],
-        'XGBOOST feature engineered':
-        naive_baye_model.predict_proba(features)[0][1],
-    }
+        # Extract unique dates from the `Dates` column
+        available_dates = sorted(data['Dates'].drop_duplicates())
+    except Exception as e:
+        st.error(f"Error processing dataset: {e}")
+else:
+    available_dates = []
 
-    avg_probability = np.mean(list(probabilities.values()))
+# Select a model to use
+if uploaded_files:
+    selected_model = st.selectbox("Select a model for predictions:", list(models.keys()))
+else:
+    selected_model = None
 
-    col1, col2 = st.columns(2)
+# Prediction workflow
+if uploaded_files and available_dates:
+    # Allow user to select a date from the `Dates` column
+    selected_date = st.selectbox("Select a Date from the dataset:", available_dates, format_func=lambda x: x.strftime("%Y-%m-%d"))
+    st.write(f"Selected Date: {selected_date}")
 
-    with col1:
-        fig = ut.create_gauge_chart(avg_probability)
-        st.plotly_chart(fig, use_container_width=True)
-        st.write(
-            f"There is a {avg_probability * 100:.2f}% chance of a market anormaly."
-        )
+    # Filter the dataset for the selected date
+    selected_row = data[data['Dates'] == pd.Timestamp(selected_date)]
 
-    with col2:
-        fig = ut.create_model_probability_chart(probabilities)
-        st.plotly_chart(fig, use_container_width=True)
+    if not selected_row.empty:
+        try:
+            # Extract features for the models
+            features = selected_row[['DXY_4Week_MA', 'VIX_4Week_MA', 'Cl1_4Week_MA']]
 
-    st.markdown("### Anormaly Probabilities")
-    for model, prob in probabilities.items():
-        st.write(f"{model} {prob}")
-    st.write(f"Average Probability: {avg_probability}")
-    return avg_probability
+            # Collect probabilities from all models
+            probabilities = {}
+            for model_name, model in models.items():
+                prob = model.predict_proba(features)[:, 1][0]  # Single prediction
+                probabilities[model_name] = prob
 
+            # Calculate average probability across all models
+            avg_probability = sum(probabilities.values()) / len(probabilities)
 
-def explain_prediction(probability):
-    prompt = f"""You are an expert data scientist at a financial trading firm, specializing in interpreting and explaining predictions of machine learning models related to Anormalies in the stock market.
+            # Display results
+            st.write(f"### Prediction Results for {selected_date}")
+            st.plotly_chart(ut.create_gauge_chart(avg_probability), use_container_width=True)
+            st.write(f"**Average Likelihood of Market Anomaly**: {avg_probability * 100:.2f}%")
 
-Your machine learning model has predicted that an anormally has a {round(probability * 100, 1)}% probability of churning, based on the information provided below.
+            # Display individual model probabilities
+            st.plotly_chart(ut.create_model_probability_chart(probabilities), use_container_width=True)
 
-Here is the Anormally information:
-{input_dict}
+        except KeyError as e:
+            st.error(f"Missing required columns for prediction: {e}")
+        except Exception as e:
+            st.error(f"Error preparing features or making predictions: {e}")
+    else:
+        st.warning("No data available for the selected date.")
 
-
-{pd.set_option('display.max.columns', None)}
-
-Below are the summary statistics for anormallies:
-{df[df['Y'] == 1].describe()}
-
-Below are the summary statistics for not market anormallies:
-{df[df['Y'] == 0].describe()}
-
-### Instructions:
-1. Provide an investment stradegy on what stocks to and not to buy
-
-2. Give a reason for your investment strategy
-
-
-Now generate your response following the structure and guidelines provided.
-
-"""
-
-    print("EXPLANATION PROMPT", prompt)
-
-    raw_response = client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[{
-            "role": "user",
-            "content": prompt
-        }],
-    )
-    return raw_response.choices[0].message.content
-
-
-def generate_email(probability, input_dict, explanation, surname):
-  prompt = f"""You are a manager at HS Bank. You are responsible for
-ensuring customers stay with the bank and are incentivized with
-various offers.
-
-You noticed a customer named {surname} has a {round(probability * 
-100, 1)}% probability of churning.
-
-Here is the customer's information:
-{input_dict}
-
-Here is some explanation as to why the customer might be at risk 
-of churning:
-{explanation}
-
-Generate an email to the customer based on their information, 
-asking them to stay if they are at risk of churning, or offering them 
-incentives so that they become more loyal to the bank.
-
-Make sure to list out a set of incentives to stay based on their 
-information, in bullet point format. Don't ever mention the 
-probability of churning, or the machine learning model to the 
-customer.
-"""
-  raw_response = client.chat.completions.create(model="Llama-3.1-8b-instant",
-                                                messages=[{
-                                                    "role": "user",
-                                                    "content": prompt
-                                                }])
-
-  print("\\n\\nEMAIL PROMPT", prompt)
-
-  return raw_response.choices[0].message.content
-
-
-st.title("Stock Market Anormally predictor")
-
-df = pd.read_csv("FinancialMarketData.xlsx - EWS.csv")
-
-input_df, input_dict = prepare_input(df)
-avg_probability = make_predictions(input_df,input_dict)
-
-explanation = explain_prediction(avg_probability, input_df)
-
-st.markdown("---")
-
-st.subheader("Explanation of Prediction")
-
-st.markdown(explanation)
-
-
-
-st.markdown("---")
-
-st.subheader("Personalized Email")
+# Final Notes
+st.sidebar.markdown("---")
+st.sidebar.markdown("Built with ❤️ using Streamlit!")
