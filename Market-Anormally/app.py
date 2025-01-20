@@ -18,8 +18,8 @@ st.title("Dynamic Stock Market Predictor 🧠📈")
 st.sidebar.title("Configuration")
 
 # Example Folders
-csv_folder = "stock-data"
-pkl_folder = "ML-files"
+csv_folder = os.path.join(os.getcwd(), "stock-data")
+pkl_folder = os.path.join(os.getcwd(), "ML-files")
 
 # Load example files from folders
 example_csv_files = [f for f in os.listdir(csv_folder) if f.endswith(".csv")]
